@@ -1,1 +1,3 @@
 # STA-363-Project-2
+
+A Project in the course STA 363 in my freshman year at Miami University. It's named the Group Project, but the coding and most analyses are my work. Other contributors include Yuexing Li, Yuxin Chen, and Wenshu Yang. In part 1, we manage and clean the data provided, as well as select different EDA graphs that are of best fit. We then build different models using class knowledge in order to find the best model to predict the Spotify popularity score using known predictor variables. In part 2, we set up model validations and explore other model types, then do the real prediction. We came in third place for our prediction accuracy, measured by RMSE.
