@@ -1,0 +1,383 @@
+---
+title: "Group Project 2"
+author: "Anh Vo, Yuexing Li, Yuxin Chen, Wenshu Yang."
+date: "4/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(unvotes)
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(ggfortify)
+library(leaps)
+library(lindia)
+library(tidymodels)
+library(GGally)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(kableExtra)
+library(modelr)
+library(car)
+```
+
+```{r}
+load("spr21_spotifyData.RData")
+```
+
+# Part 1
+
+### Data Joining
+
+```{r,}
+album <- album_artist_df %>% 
+  rename(name = artist_name)
+album <- album %>%
+  full_join(artist_df, by = c("artist_id","name"))
+album <- album %>%
+  full_join(album_track_df, by = "album_id")
+album <- album %>%
+  full_join(tracks_df, by = "track_id")
+album <- album %>%
+  full_join(track_features, by = "track_id")
+```
+
+
+## Question 1 
+
+```{r, message = FALSE, warning = FALSE}
+album_part1 <- album %>%
+  filter(!album_type == "single") %>%
+  group_by(name, album_name, album_release_date, album_id) %>%
+  summarize(Mean=mean(popularity)) %>%
+  select(-album_id) %>%
+  arrange(desc(Mean))
+kable(head(album_part1, n = 15))
+```
+
+*The release dates of these popular albums are between 2017 and 2021, with the majority of albums released in 2020, indicating that these albums are all recently released. All of these artists are major artists like Taylor Swift, Ariana Grande, and Harry Styles. At least 5 of these albums are Grammys winners (folklore, future nostalgia, etc). Most of our group are international students, so we may know some to all of them, but we all know the artists because these artists are very famous. The instructor may have heard these albums, because these albums are very popular and they are all released recently. I have also heard these albums played on the radio since their release dates, so there's a high chance that the professor have heard the songs on these albums.*
+
+## Question 2
+
+#### Key, Time Signature, and Mode into categorical variables
+
+```{r, message = FALSE, warning = FALSE}
+album_part2 <- album %>%
+   mutate(key = as.factor(key),
+         time_signature=as.factor(time_signature),
+         mode = as.factor(mode))
+  album_part2 <- na.omit(album_part2)
+```
+
+#### Graph of Key vs. Popularity
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(album_part2, aes(x=key, y=popularity)) +
+  geom_boxplot() +
+  stat_summary(fun=mean, geom="point", color="red", fill="red") +
+  theme_bw()
+```
+
+*From this model, all keys' mean and median popularity score are between 27 and 30 ish. There are no outliers at key 3,6,9,10, and key 0,1,2,4,7,8,11 all have outliers, among which key7 and key11 have more outliers. Key 3 and 9 have lower range popularity than other keys. The first and third quartile range for all the keys are kind of the same as well. There doesn't seem to be any relationship between different categories of keys and the popularity score*
+
+#### Graph of Mode vs. Popularity
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(album_part2, aes(x = mode, y = popularity)) +
+  geom_boxplot() +
+  stat_summary(fun.y=mean, geom="point", color="red", fill="red") +
+  theme_bw()
+```
+
+*From this model, both mode 0 and mode 1 have the mean and median popularity score of around 27 to 29 ish. The popularity score of mode 0 is higher than that of mode 1. Mode 1 also has more outliers than mode 2. The range and quartiles are very similar to each other so there doesn't seem to be any relationship between different modes and popularity.*
+
+#### Graph of Time Signature vs. Popularity
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(album_part2, aes(x = time_signature, y = popularity)) +
+  geom_boxplot() +
+  stat_summary(fun.y=mean, geom="point", color="red", fill="red") +
+  theme_bw()
+```
+
+*From this model, the mean popularity score of the time signature 0 is around 6, the mean popularity score of the time signature 1 is around 24, mean of time signature 3 is around 25, mean of time signature 5 is around 27, and the mean of time signature 4 is around 30. The Boxplot 4 also has more outliers than the other boxplots. The data of time_signature 0 and 1 are highly skewed to the right, as the means are higher than the medians. The same goes for time_signature 5 as well, although less skewness. There seems to be difference variance among different time signatures. All of this information can mean that different time_signature can have an effect on popularity score. *
+
+
+## Question 3
+
+#### Calculate the Mean duration and Mean population
+
+```{r, message = FALSE, warning = FALSE}
+album_new <- album %>%
+  group_by(track_name, name)  %>%
+  summarize(Mean_dur=mean(duration_ms, na.rm = TRUE),
+            Mean_pop=mean(popularity, na.rm = TRUE)) %>%
+  drop_na() 
+```
+
+**First, we look at the plot of mean population score as a function of mean duration when duration is a numerical variable.**
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(album_new, aes(x=Mean_dur, y=Mean_pop)) + 
+  geom_point() + 
+  geom_smooth(method="lm", se=FALSE) +
+  xlab(expression(paste("Mean_dur"))) +
+  ylab(expression(paste("Mean_pop")))
+```
+
+*From the model, a lot of data are concentrated on the left, in the y interval from 0 to 100, and x interval from 0e+00 to 1e+06. The data on the left represents songs of short mean duration, and we cannot see the impact of songs of short mean duration on popularity from the dense data. The data closer to the right indicates that the song is longer, and there are some outliers. Observing these outliers, it can be seen that long songs result in lower mean popularity score. Observed through the regression line, the regression line is showing a downward trend, indicating that the length of the song has a decreasing impact on the popularity. All of this information can mean that numerical mean duration might have an effect on popularity score.*
+
+**In the second part of this question, we look at the plot of mean population score as a function of mean duration when duration is a categorical variable, categorize as follows: **
+
+```{r, message = FALSE, warning = FALSE}
+album_newMutate <- album_new %>%
+  mutate(track_length = case_when(Mean_dur <= 150000 ~ "Short", Mean_dur <= 210000 ~ "Radio Friendly", Mean_dur <= 270000 ~ "Longer Radio",Mean_dur <= 330000 ~ "Long Songs", Mean_dur > 330000 ~ "Very Long Songs" )) %>%
+  mutate(track_length=factor(track_length, levels=c("Short", "Radio Friendly", "Longer Radio", "Long Songs", "Very Long Songs")))
+```
+
+#### Graph of Track Length vs. Mean Popularity
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(album_newMutate, aes(x = track_length, y = Mean_pop)) +
+  geom_boxplot() +
+  stat_summary(fun=mean, geom="point", color="red", fill="red") +
+  theme_bw()
+```
+
+
+*In this plot, we can see that the mean population when track length is short, around 26, is significantly smaller than radio friendly and longer radio, around 31 and 30. Other track lengths like long songs and very long songs box plots have mean popularity score that is around 27 to 28. So overall the mean population for different track lengths isn't really that different from each other. Radio friendly track length has really wide variability, while very long songs have relatively low variabilityy. All plots have quite a few outliers. All of this information can mean that categorical mean duration might not have an effect on popularity score.*
+
+
+## Question 4
+
+#### Find songs that appear at least twice that has both a clean and explicit versions
+
+```{r, message = FALSE, warning = FALSE}
+album_part4 <- album %>% 
+    group_by(track_name, name, album_name) %>% 
+    filter(n()>1)
+  album_part4 <- na.omit(album_part4)
+   album_part42 <- album_part4 %>% 
+   group_by(track_name, name, album_name) %>% 
+   summarize(total = n(),
+             totaltrue = sum(explicit_lyrics == TRUE)) %>% 
+    filter(totaltrue > 0 & totaltrue < total) 
+    album_part4 <- album_part42 %>%
+  full_join(album_part4)
+ album_part4 <- na.omit(album_part4)
+```
+
+#### Create two new variables of the mean popularity score for songs with explicit lyrics vs song without explicit lyrics by transforming the data set to wide. 
+
+```{r, message = FALSE, warning = FALSE}
+album_part4 <- album_part4 %>%
+    group_by(track_name, explicit_lyrics, album_name, name) %>% 
+    summarise(Mean_pop = mean(popularity))
+album_part4 <- album_part4 %>%
+pivot_wider(names_from = explicit_lyrics, 
+            names_glue = "{.value}_{explicit_lyrics}",
+            values_from = Mean_pop)
+```
+
+
+```{r, message = FALSE, fig.width=5, fig.height=3, fig.align='left'}
+ggplot(album_part4, aes(x=Mean_pop_FALSE, y=Mean_pop_TRUE)) + 
+  geom_abline(aes(intercept=0, slope=1, col = "red")) +
+  geom_point() 
+```
+
+*In this model, we can find a large amount of data gathered together above the red x = y line, so that means that typically, mean popularity score for songs with explicit lyrics results is higher than mean popularity score for songs $without$ explicit lyrics. There are a few songs that their clean version results in higher or equal mean popularity score than their explicit version, but those are just a few compared to a huge number of songs that their explicit versions result in higher mean popularity score compared to their clean versions.*
+
+
+## Question 5
+
+#### Keeping only album type = album, year after 2016, time signature > 0, and omit N/A data.
+
+```{r, message = FALSE, warning = FALSE}
+album_part5 <- album %>%
+  select(album_type, time_signature, album_release_date, popularity, duration_ms, explicit_lyrics) %>% 
+  mutate(year =  substr(album_release_date, 1, 4),
+          year =  as.numeric(year)) %>% 
+  filter(!album_type %in% c("single","compilation"),
+         !time_signature %in% "0",
+         year > 2016) 
+  album_part5 <- na.omit(album_part5)
+```
+
+
+## Question 6
+
+**We will consider all variables that we have in album_part5, except for album_type as we already filtered out singles and compilations, which results in only 1 level of album type. **
+
+```{r, message = FALSE, warning = FALSE}
+album_part6 <-album_part5 %>%
+group_by(time_signature, year, explicit_lyrics, popularity) %>%
+summarize(Mean_dur=mean(duration_ms)) %>%
+mutate(track_length = case_when(Mean_dur < 150000 ~ "Short", Mean_dur <= 210000 ~ "Radio Friendly", Mean_dur <= 270000 ~ "Longer Radio",Mean_dur <= 330000 ~ "Long Songs", Mean_dur > 330000 ~ "Very Long Songs" ),
+        track_length=factor(track_length, levels=c("Short", "Radio Friendly", "Longer Radio", "Long Songs", "Very Long Songs")),
+       time_signature = as.factor(time_signature)) %>%
+select(time_signature,year,popularity,track_length, explicit_lyrics, Mean_dur)
+```
+
+#### Full Model
+
+```{r, message = FALSE, warning = FALSE}
+full.fit <- lm(popularity~time_signature+track_length+year+Mean_dur+explicit_lyrics,data=album_part6)
+glance(full.fit) %>%
+  select(residual_std_error = sigma, 
+         F_stat = statistic, df_mod = df, df_res = df.residual, p.value,
+         Adj_R_sqr = adj.r.squared) %>%
+  kable()
+```
+
+*We can see that with an F-statistic of 14.54 on 10 and 1662 DF and  p-value: < 2.2e-16, this model is significant in predicting the popularity score. However, when we look at the autoplot: *
+
+```{r, message = FALSE, warning = FALSE}
+autoplot(full.fit)
+```
+
+*We can see that our residuals vs fitted plot has a fanning effect, which is alarming as it violate constant variance. We can also see from the normal q-q plot that it is s-shaped and data from both ends aren't follow the 45-degree line remotely close. Therefore, we will consider a box-cox transformation. However, because our response variable has to be positive and some popularity scores are zeros, so we will add 1 to the response variable, then look at the box-cox plot. *
+
+
+```{r, message = FALSE, warning = FALSE}
+full.fit <- lm((popularity+1)~time_signature+track_length+year+Mean_dur+explicit_lyrics,data=album_part6)
+gg_boxcox(full.fit)
+```
+
+*We can see that Lambda is at 0.7, which is close to 0.6, so we will perform a square root transformation to the response variable+1.*
+
+```{r, message = FALSE, warning = FALSE}
+full.fit <- lm(sqrt(popularity+1)~time_signature+track_length+year+Mean_dur+explicit_lyrics,data=album_part6)
+autoplot(full.fit)
+glance(full.fit) %>%
+  select(residual_std_error = sigma, 
+         F_stat = statistic, df_mod = df, df_res = df.residual, p.value,
+         Adj_R_sqr = adj.r.squared, AIC, BIC) %>%
+  kable()
+```
+
+*We can see that there are still a little fanning effect in the residuals vs fitted plot, but much better. We can also see in the normal q-q plot that the data are following the 45-degree line closely, with some a little off at the end tail but it is much better than the old plots. We will be using the new transformed response variable from now on. The full.fit has an F-statistic of 18.32 on 8 and 1664 DF and p-value: < 2.2e-16, this model is also significant in predicting the popularity score.*
+
+*We check if there is any multicollinearity by the vif() function*
+
+```{r, message = FALSE, warning = FALSE}
+vif(full.fit)
+```
+
+*VIF for most variables are around 1, which is nice, but we have noticed that track_length and Mean duration might be related to each other. Track_length's VIF is 8.117806, and Mean_dur's VIF is 6.574477, which is in the moderate concerning region. This can mean that only one of track_length or Mean_duration contributes meaningful information to our model. Mean duration can be a covariate, so we proceed to add an interaction term track_length:Mean_dur into this ANCOVA model to observe. We then fit the ANCOVA model called full.fit2. Because we transformed the response variable popularity, we will have to do that for full.fit2 as well so that we will have the same response variable to compare between two models. *
+
+```{r, message = FALSE, warning = FALSE}
+full.fit2 <- lm(sqrt(popularity+1)~time_signature+track_length+year+Mean_dur+explicit_lyrics+track_length:Mean_dur,data=album_part6)
+glance(full.fit2) %>%
+  select(residual_std_error = sigma, 
+         F_stat = statistic, df_mod = df, df_res = df.residual, p.value,
+         Adj_R_sqr = adj.r.squared, AIC, BIC) %>%
+  kable()
+```
+
+*We then continue to use anova function to decide which model is better and should be the full fit*
+
+```{r, message = FALSE, warning = FALSE}
+anova(full.fit, full.fit2)
+```
+
+*We can see that with an F-statistic of 3.7361 on 4 and 6963.6 DF and p-value of 0.004942, we can see that that model 2 which is the model with the interaction term is better and more significant. We will be using full.fit2 for our full model.*
+
+*This will be our final full fit model. *
+
+## Perform a backward and forward stepwise variable selection
+
+### Backward Regression Model
+
+```{r, message = FALSE, warning = FALSE}
+fit.back <- stats::step(full.fit2,direction = "backward", trace = 0)
+```
+
+*We can see that the variables selected are track_length:Mean_dur + track_length + year + Mean_dur + explicit_lyrics*
+
+### Forward Regression Model
+
+```{r, message = FALSE, warning = FALSE}
+null.fit <- lm(sqrt(popularity+1) ~ 1, data = album_part6)
+fit.for <- stats::step(null.fit, scope = formula(full.fit2), direction = "forward",trace=0)
+```
+
+*We can see that the variables selected are track_length:Mean_dur + track_length + year + Mean_dur + explicit_lyrics*
+
+**Both the forward and backward models choose the same predictor variables. We proceed to find the best subsets regression model for our prediction. **
+
+
+### Subsets Models
+
+*First, we are trying to include all predictor variables including their levels to find the best nvmax. Then, we look at the subsets for adjusted r-squared and bic to find the appropriate number of variables needed and if we need to create new ones or not. *
+
+```{r, message = FALSE, warning = FALSE }
+fit.subs <- regsubsets(formula(full.fit2), data=album_part6, nbest=1, nvmax=14)
+```
+
+```{r, message = FALSE, warning = FALSE}
+subsets(fit.subs, statistic="adjr2", legend=FALSE)
+subsets(fit.subs, statistic="bic", legend=FALSE)
+```
+
+*Observing the plots above, we can see that models with subset size 4 to 6 will have the best BIC, and also models with subset 4 or 6 will have the best Adj-R-squared. We adjust the nvmax to 6 to get the best model with subset size 6.*
+
+```{r, message = FALSE, warning = FALSE}
+summary(regsubsets(formula(full.fit2), data=album_part6, nbest=1, nvmax=6))
+```
+
+*Looking at the summary table for the model with subset size 6, we can see that regsubsets() treats time_signature1, time_signature3, and time_signature5 as one level, so we can combine those to form a new variable named timesign135, while still keeping time_signature4. We can also see that regsubsets() treats track_length "Short","Longer Radio", "Radio Friendly", and "Long Songs" as one level, so we will also combine them together to form a new variable named newtrack, while still keeping "Very Long Songs" *
+
+
+```{r, message = FALSE, warning = FALSE}
+album_part6 <- album_part6 %>%
+  mutate(timesign135 = case_when(time_signature %in% c("1","3","5") ~ "135", 
+                             time_signature == "4" ~ "4"),
+         newtrack = case_when(track_length %in% c("Short","Longer Radio", "Long Songs", "Radio Friendly") ~ "Short-Radio",
+                             track_length == "Very Long Songs" ~ "Very Long Songs"))
+```
+
+*We will put our new variables timesign135 and newtrack in our models to observe. We proceed to build the best three subset regression models*
+
+*We have transformed the response variable for our full fit model, so we will have to do the same for our subsets models as well.*
+
+
+```{r, message = FALSE, warning = FALSE}
+fit.subs3 <- lm(sqrt(popularity+1)~explicit_lyrics+Mean_dur+track_length:Mean_dur,data=album_part6)
+fit.subs4 <- lm(sqrt(popularity+1)~timesign135+Mean_dur+explicit_lyrics+track_length:Mean_dur,data=album_part6)
+fit.subs5 <- lm(sqrt(popularity+1)~timesign135+newtrack+Mean_dur+explicit_lyrics+track_length:Mean_dur,data=album_part6)
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+bind_rows(
+  glance(full.fit2) %>% mutate(Model="Full Model"),
+  glance(fit.back) %>% mutate(Model="Backward"),
+  glance(fit.for) %>% mutate(Model="Forward"),
+  glance(fit.subs3) %>% mutate(Model="Model subs3: Explicit Lyrics + Mean duration + Interaction"),
+  glance(fit.subs4) %>% mutate(Model="Model subs4: Time signatures + Explicit Lyrics + Mean duration + Interaction"),
+  glance(fit.subs5) %>% mutate(Model="Model subs5: Time signatures + New Track + Explicit Lyrics + Mean duration + Interaction")) %>%
+  select(Model, Adj.R.Squared = adj.r.squared,AIC, BIC) %>%
+  kable()
+```
+
+
+*Looking at all data above, we will be choosing fit.subs5 for our prediction. We can see that it has a significant smaller AIC than any other models, only 0.5 larger than backward and forward models, which is a very insignificant difference. It also has a relatively large adj-r-squared of 0.081, better than model subs3 and subs4. Because full model, backward and forward models all have very large BIC but AIC a little similar to model subs4 and subs5, it's best to not use them. fit.subs5 have the best Adj-R-squared and AIC in all the subsets models with a not too bad BIC. We choose fit.subs5 for our prediction, which is the model with the following predictor variables: timesign135 + newtrack + Mean_dur + explicit_lyrics + track_length:Mean_dur*
+
+
+### Build a summary table for our best model
+
+```{r, message = FALSE, warning = FALSE}
+summary(fit.subs5)
+library(rsq)
+rsq(fit.subs5,adj=TRUE)
+rsq.partial(fit.subs5)
+```
+
+*Significant variables include the difference between time signature 135 and time signature 4, with p-value = 0.04314. The difference between track_length Very Long Songs and the rest track lengths is also significant, however a little less since the p-value os 0.049 almost = 0.05. Mean_dur and the difference between the explicit versions and clean versions of the songs are the most influential with really low p-value of 7.51e-05 and 3.99e-08, respectively. The interaction between Mean duration and Very Long Songs track length is also significant with low p-value of 0.00349.*
+
+*We then take a look at the partial r-squared of all predictor variables in our best model. We can see that a significantly small number of -6.661338e-16 of the variation not explained by Mean_dur is explained by all the other predictor variables, so Mean_dur is the most influential variable. timesign135 and newtrack also have relatively low partial r-squared as well. But overall, the percent of variation not explained by a certain predictor variable in this model is explained by all the other predictor variables is very low, so most predictor variables have some degree of significance.*
+
