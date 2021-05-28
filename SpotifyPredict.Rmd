@@ -1,0 +1,169 @@
+---
+title: "Group Project 2"
+author: "Anh Vo, Yuexing Li, Yuxin Chen, Wenshu Yang"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(unvotes)
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(ggfortify)
+library(leaps)
+library(lindia)
+library(tidymodels)
+library(GGally)
+library(ggplot2)
+library(gridExtra)
+library(kableExtra)
+library(caret)
+library(modelr)
+library(car)
+```
+
+## Data Processing from Part 1
+
+```{r}
+load("spr21_spotifyData.RData")
+```
+
+### Data Joining
+
+```{r,}
+album <- album_artist_df %>% 
+  rename(name = artist_name)
+album <- album %>%
+  full_join(artist_df, by = c("artist_id","name"))
+album <- album %>%
+  full_join(album_track_df, by = "album_id")
+album <- album %>%
+  full_join(tracks_df, by = "track_id")
+album <- album %>%
+  full_join(track_features, by = "track_id")
+```
+
+### Data needed
+
+```{r, message = FALSE, warning = FALSE}
+album_part5 <- album %>%
+  select(album_type, time_signature, album_release_date, popularity, duration_ms, explicit_lyrics) %>% 
+  mutate(year =  substr(album_release_date, 1, 4),
+          year =  as.numeric(year)) %>% 
+  filter(!album_type %in% c("single","compilation"),
+         !time_signature %in% "0",
+         year > 2016) 
+  album_part5 <- na.omit(album_part5)
+```
+
+### Transformed Data
+
+```{r, message = FALSE, warning = FALSE}
+album_part6 <-album_part5 %>%
+group_by(time_signature, year, explicit_lyrics, popularity) %>%
+summarize(Mean_dur=mean(duration_ms)) %>%
+mutate(track_length = case_when(Mean_dur < 150000 ~ "Short", Mean_dur <= 210000 ~ "Radio Friendly", Mean_dur <= 270000 ~ "Longer Radio",Mean_dur <= 330000 ~ "Long Songs", Mean_dur > 330000 ~ "Very Long Songs" ),
+        track_length=factor(track_length, levels=c("Short", "Radio Friendly", "Longer Radio", "Long Songs", "Very Long Songs")),
+       time_signature = as.factor(time_signature),
+       timesign135 = case_when(time_signature %in% c("1","3","5") ~ "135", 
+                             time_signature == "4" ~ "4"),
+        newtrack = case_when(track_length %in% c("Short","Longer Radio", "Long Songs", "Radio Friendly") ~ "Short-Radio",
+                             track_length == "Very Long Songs" ~ "Very Long Songs")) %>%
+select(time_signature,year,popularity,track_length, explicit_lyrics, Mean_dur, newtrack,timesign135)
+```
+
+
+# PART 2
+
+**We explore different interactions to build different models. We noticed that duration and time_signature can be related to each other as they are some measures to the length of the song, so we will consider their interaction. Track length certainly is related to Mean duration as we derived track length from that. We thought about how explicit lyrics will influenced time signature as well, so we also include that. Because we have included so many interactions, we think that time_signature and track_length might interact as well, but those information might overlapped because we got track_length directly from Mean dur, and we interact time signature with both, which could be redundant. Also in another model, we consider all three track_length, Mean dur, and timesign135 together. We came up with these four models, first one is the model from part 1: **
+
+
+```{r}
+fit.subs5 <- lm(sqrt(popularity+1)~timesign135+newtrack+Mean_dur+explicit_lyrics+track_length:Mean_dur,data=album_part6)
+fit.subs6 <- lm(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur,data=album_part6)
+fit.subs7 <- lm(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur+timesign135:track_length,data=album_part6)
+fit.subs8 <- lm(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur+timesign135*track_length*Mean_dur,data=album_part6)
+```
+
+*We proceed to perform a repeated cross-validation to test our four models that we built.*
+
+
+```{r, message = FALSE, warning = FALSE}
+library(caret)
+train_control <- trainControl(method="repeatedcv", number=5, repeats=10)
+
+set.seed(363)
+album.subs5 <- train(sqrt(popularity+1)~timesign135+newtrack+Mean_dur+explicit_lyrics+track_length:Mean_dur, data=album_part6, 
+                    trControl=train_control, method="lm")
+
+set.seed(363)
+album.subs6 <- train(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur,data=album_part6, 
+                    trControl=train_control, method="lm")
+
+set.seed(363)
+album.subs7 <- train(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur+timesign135:track_length,                     data=album_part6, trControl=train_control, method="lm")
+
+set.seed(363)
+album.subs8 <- train(sqrt(popularity+1)~explicit_lyrics:timesign135+track_length:Mean_dur+timesign135:Mean_dur+
+                       timesign135*track_length*Mean_dur,data=album_part6, trControl=train_control, method="lm")
+```
+
+**We have explored random forest and found that it is pretty good for prediction. According to Cory Maklin in his article "Random forest in R," "The random forest algorithm works by aggregating the predictions made by multiple decision trees of varying depth. Every decision tree in the forest is trained on a subset of the dataset called the bootstrapped dataset." We thought that it does a very thorough training, so we came up with this model: **
+
+
+```{r}
+set.seed(363)
+model <- train(sqrt(popularity+1) ~ time_signature+timesign135+newtrack+track_length+Mean_dur+explicit_lyrics, data = album_part6, method = 'rf', trControl = train_control)
+model
+```
+
+**As seen from our five models above, we set seed at every new model built. We use set.seed(363) so the same random set is always picked for the purpose of this demonstration which can ensures reproducibility. In random Forest, there are 1673 samples and 6 predicators, they are time_signature, timesign135, newtrack, track_length, Mean_dur and explicit_lyrics. The model mtry 2 has the lowest RMSE (2.026366) and relatively low MAE (1.666330). Thus, the final value used for the model was mtry = 2. mtry is the number of variables randomly sampled as candidates at each split, so for this model they chose 2 variables at each split.**
+
+*We then take a look at the RMSE, MAE, and Adjusted R-squared of these five models. We use the resamples() function for this.*
+
+```{r, message = FALSE, warning = FALSE}
+results <- resamples(list(Subs5=album.subs5, Subs6=album.subs6, Subs7=album.subs7, Subs8=album.subs8, rForest = model))
+summary(results)
+ggplot(results, metric="RMSE")
+ggplot(results, metric="MAE")
+ggplot(results, metric="Rsquared")
+```
+
+
+**As we can see in the summary, we can see that the random forest model is the best in terms of relatively low mean RMSE(1.666330), lowest mean MAE (2.026366) and largest mean Adjusted R-Squared (0.10394027). The median values of the random forest model is also better than most models. We can also see in the plots that the rForest model have the lowest RMSE all the way to the left of the plot, relatively low MAE (on differs by around < 0.01), and also does the best with the highest Adjusted R-squared all the way to the right of the plot. Therefore, we will be choosing our random forest model for popularity prediction.**
+
+
+*We started loading data for predictions*
+
+```{r}
+load("spr21_tracks_to_predict.RData")
+```
+
+### Transform and add needed predictors
+
+**Notes: Mean_dur is going to be just duration because we don't have track name or album to group by to know that they are from the same song.**
+
+```{r}
+tracks_to_predict <- tracks_to_predict %>%
+  mutate(Mean_dur=duration_ms, na.rm = TRUE,
+         time_signature = as.factor(time_signature),
+         track_length = case_when(Mean_dur <= 150000 ~ "Short", Mean_dur <= 210000 ~ "Radio Friendly", Mean_dur <= 270000 ~ "Longer Radio",Mean_dur <= 330000 ~ "Long Songs", Mean_dur > 330000 ~ "Very Long Songs" ),
+        track_length=factor(track_length, levels=c("Short", "Radio Friendly", "Longer Radio", "Long Songs", "Very Long Songs")),
+        timesign135 = case_when(time_signature %in% c("1","3","5") ~ "135", 
+                                time_signature == "4" ~ "4"),
+        newtrack = case_when(track_length %in% c("Short","Longer Radio", "Long Songs", "Radio Friendly") ~ "Short-Radio",
+                             track_length == "Very Long Songs" ~ "Very Long Songs"))
+```
+
+
+### Predict and write prediction to a csv file.
+
+```{r}
+tracks_to_predict <- tracks_to_predict %>%
+  add_predictions(model, var = "popularity") %>%
+  mutate(popularity = (popularity)^2-1) %>%
+  select(STA363_id, explicit_lyrics, Mean_dur, popularity)
+write_csv(x = tracks_to_predict, "SpotifyWithPredictions.csv")
+```
